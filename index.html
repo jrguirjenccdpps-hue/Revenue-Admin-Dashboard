@@ -1,556 +1,1385 @@
-// ============================================
-// GOOGLE APPS SCRIPT BACKEND
-// Barangay Sampaloc Revenue System
-// Combined Version - Tanay, Rizal
-// ============================================
-
-const SHEET_ID = '1SxLBdXVptmGlrl5u1WDtd6TSGcwTMrqU_nD2RrgXnis';
-const COLLECTIONS_SHEET = 'Collections';
-const BALANCE_SHEET = 'Balance';
-const USER_SHEET = 'User';
-
-// ============================================
-// INITIALIZATION & SETUP
-// ============================================
-
-function initialSetup() {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-
-        // Setup Collections Sheet
-        let collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
-        if (!collectionsSheet) {
-            collectionsSheet = ss.insertSheet(COLLECTIONS_SHEET);
-        }
-        collectionsSheet.clear();
-        const collectionHeaders = ['Date', 'RCD_No', 'OR_Number', 'Payor_Name', 'Nature_of_Collection', 'Amount', 'Timestamp'];
-        collectionsSheet.getRange(1, 1, 1, collectionHeaders.length).setValues([collectionHeaders]);
-        formatHeaders(collectionsSheet, collectionHeaders.length);
-
-        // Setup Balance Sheet
-        let balanceSheet = ss.getSheetByName(BALANCE_SHEET);
-        if (!balanceSheet) {
-            balanceSheet = ss.insertSheet(BALANCE_SHEET);
-        }
-        balanceSheet.clear();
-        const balanceHeaders = ['Beginning_Balance', 'Date', 'Total_Revenue', 'Date', 'Ending_Balance'];
-        balanceSheet.getRange(1, 1, 1, balanceHeaders.length).setValues([balanceHeaders]);
-        formatHeaders(balanceSheet, balanceHeaders.length);
-
-        // Add initial row with zero beginning balance
-        balanceSheet.getRange(2, 1, 1, 5).setValues([[0, '', 0, '', 0]]);
-
-        Logger.log('✅ Setup completed successfully!');
-        return 'Setup completed! Sheets created: Collections, Balance';
-
-    } catch (error) {
-        Logger.log('❌ Error in initialSetup: ' + error.toString());
-        throw error;
-    }
-}
-
-function formatHeaders(sheet, numCols) {
-    const headerRange = sheet.getRange(1, 1, 1, numCols);
-    headerRange.setFontWeight('bold');
-    headerRange.setBackground('#667eea');
-    headerRange.setFontColor('white');
-    headerRange.setHorizontalAlignment('center');
-    sheet.autoResizeColumns(1, numCols);
-}
-
-// ============================================
-// USER AUTHENTICATION
-// ============================================
-
-function authenticateUser(userId, password) {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const userSheet = ss.getSheetByName(USER_SHEET);
-
-        if (!userSheet) {
-            return { success: false, message: 'User sheet not found' };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barangay Sampaloc - Revenue Analytics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
 
-        const userData = userSheet.getRange(2, 1, userSheet.getLastRow() - 1, 4).getValues();
+        :root {
+            --primary: #667eea;
+            --primary-dark: #5a67d8;
+            --secondary: #764ba2;
+            --success: #48bb78;
+            --warning: #ed8936;
+            --danger: #f56565;
+            --dark: #2d3748;
+            --light: #f7fafc;
+            --gray: #e2e8f0;
+            --card-bg: #ffffff;
+            --text-primary: #2d3748;
+            --text-secondary: #718096;
+        }
 
-        for (let i = 0; i < userData.length; i++) {
-            if (userData[i][0] === userId && userData[i][1] === password) {
-                return {
-                    success: true,
-                    name: userData[i][2],
-                    position: userData[i][3]
-                };
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: var(--text-primary);
+        }
+
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+
+        .login-logo {
+            font-size: 4rem;
+            margin-bottom: 10px;
+        }
+
+        .login-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 30px;
+        }
+
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .login-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid var(--gray);
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: rgba(255,255,255,0.9);
+        }
+
+        .login-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .login-btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .login-error {
+            color: var(--danger);
+            font-size: 0.9rem;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .login-error.show {
+            display: block;
+        }
+
+        .dashboard-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            display: none;
+        }
+
+        .dashboard-container.active {
+            display: block;
+        }
+
+        header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .header-left h1 {
+            font-size: 1.8rem;
+            color: var(--primary);
+            margin-bottom: 5px;
+        }
+
+        .header-left p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .logout-btn {
+            padding: 8px 16px;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--light);
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .icon-blue { background: rgba(102, 126, 234, 0.1); color: var(--primary); }
+        .icon-green { background: rgba(72, 187, 120, 0.1); color: var(--success); }
+        .icon-orange { background: rgba(237, 137, 54, 0.1); color: var(--warning); }
+        .icon-red { background: rgba(245, 101, 101, 0.1); color: var(--danger); }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 5px;
+        }
+
+        .stat-change {
+            font-size: 0.85rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .positive { color: var(--success); }
+        .negative { color: var(--danger); }
+
+        .charts-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .chart-card {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .chart-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .data-table-section {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+            margin-bottom: 30px;
+        }
+
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .search-box {
+            position: relative;
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 40px 12px 15px;
+            border: 2px solid var(--gray);
+            border-radius: 12px;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+        }
+
+        .filters {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filter-select {
+            padding: 10px 15px;
+            border: 2px solid var(--gray);
+            border-radius: 12px;
+            background: white;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--gray);
+        }
+
+        th {
+            background: var(--light);
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        tr:hover {
+            background: var(--light);
+        }
+
+        .amount-cell {
+            font-weight: 700;
+            color: var(--success);
+        }
+
+        .badge {
+            padding: 5px 12px;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: rgba(72, 187, 120, 0.1);
+            color: var(--success);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: rgba(245, 101, 101, 0.1);
+            color: var(--danger);
+            padding: 15px;
+            border-radius: 12px;
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
             }
         }
 
-        return { success: false, message: 'Invalid credentials' };
-    } catch (error) {
-        Logger.log('Auth error: ' + error);
-        return { success: false, message: 'Authentication error' };
-    }
-}
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-function formatDate(date) {
-    if (!date) return '';
-    const d = new Date(date);
-    return d.getFullYear() + '-' + 
-           String(d.getMonth() + 1).padStart(2, '0') + '-' + 
-           String(d.getDate()).padStart(2, '0');
-}
-
-function checkORDuplicate(orNumber) {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const sheet = ss.getSheetByName(COLLECTIONS_SHEET);
-
-        if (sheet.getLastRow() <= 1) return false;
-
-        const orColumn = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
-
-        for (let i = 0; i < orColumn.length; i++) {
-            if (parseInt(orColumn[i][0]) === parseInt(orNumber)) {
-                return true;
-            }
-        }
-        return false;
-
-    } catch (error) {
-        Logger.log('Error checking OR duplicate: ' + error.toString());
-        return false;
-    }
-}
-
-function getDailyRevenue(dateStr) {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const sheet = ss.getSheetByName(COLLECTIONS_SHEET);
-
-        if (sheet.getLastRow() <= 1) return 0;
-
-        const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
-        let total = 0;
-
-        for (let i = 0; i < data.length; i++) {
-            const rowDate = Utilities.formatDate(new Date(data[i][0]), 'Asia/Manila', 'yyyy-MM-dd');
-            if (rowDate === dateStr) {
-                total += parseFloat(data[i][5]) || 0;
-            }
+        .modal-header {
+            margin-bottom: 20px;
         }
 
-        return total;
+        .modal-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
 
-    } catch (error) {
-        Logger.log('Error getting daily revenue: ' + error.toString());
-        return 0;
-    }
-}
+        .form-group {
+            margin-bottom: 20px;
+        }
 
-function getUsedORNumbers() {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const sheet = ss.getSheetByName(COLLECTIONS_SHEET);
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
 
-        if (sheet.getLastRow() <= 1) return [];
+        .form-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid var(--gray);
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
 
-        const orData = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
-        return orData.map(row => parseInt(row[0])).filter(n => !isNaN(n));
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
 
-    } catch (error) {
-        Logger.log('Error getting OR numbers: ' + error.toString());
-        return [];
-    }
-}
+        .date-range-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
 
-// ============================================
-// BALANCE SHEET MANAGEMENT
-// ============================================
+        .date-range-row .form-input {
+            flex: 1;
+        }
 
-function updateBalanceSheet() {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
-        const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+        }
 
-        if (collectionsSheet.getLastRow() <= 1) return;
+        .action-card {
+            background: white;
+            border: 2px solid var(--gray);
+            border-radius: 16px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
 
-        const data = collectionsSheet.getRange(2, 1, collectionsSheet.getLastRow() - 1, 6).getValues();
-        const dateMap = {};
+        .action-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.15);
+        }
 
-        for (let i = 0; i < data.length; i++) {
-            const dateStr = formatDate(data[i][0]);
-            const amount = parseFloat(data[i][5]) || 0;
+        .action-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
 
-            if (dateStr) {
-                if (!dateMap[dateStr]) {
-                    dateMap[dateStr] = 0;
-                }
-                dateMap[dateStr] += amount;
+        .action-title {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 5px;
+        }
+
+        .action-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        @media (max-width: 768px) {
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
+            
+            .stat-value {
+                font-size: 1.5rem;
+            }
+            
+            header {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .login-container {
+                margin: 20px;
+                padding: 30px;
             }
         }
 
-        const sortedDates = Object.keys(dateMap).sort();
-        let beginningBalance = 0;
-
-        if (balanceSheet.getLastRow() >= 2) {
-            const firstRow = balanceSheet.getRange(2, 1, 1, 1).getValue();
-            beginningBalance = parseFloat(firstRow) || 0;
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
         }
 
-        if (balanceSheet.getLastRow() > 1) {
-            balanceSheet.getRange(2, 1, balanceSheet.getLastRow() - 1, 5).clear();
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div class="login-container" id="loginContainer">
+        <div class="login-logo">🏛️</div>
+        <div class="login-title">Barangay Sampaloc<br>Revenue System</div>
+        <p style="color: var(--text-secondary); margin-bottom: 30px;">Tanay, Rizal</p>
+        
+        <form class="login-form" id="loginForm" onsubmit="handleLogin(event)">
+            <input type="text" class="login-input" id="loginUserId" placeholder="User ID" required>
+            <input type="password" class="login-input" id="loginPassword" placeholder="Password" required>
+            <div class="login-error" id="loginError"></div>
+            <button type="submit" class="login-btn">Sign In</button>
+        </form>
+    </div>
 
-        let currentBalance = beginningBalance;
-        const rows = [];
+    <!-- Main Dashboard -->
+    <div class="dashboard-container" id="dashboardContainer">
+        <!-- Header -->
+        <header class="fade-in">
+            <div class="header-left">
+                <h1>🏛️ Barangay Sampaloc</h1>
+                <p>Revenue Analytics Dashboard • Tanay, Rizal</p>
+            </div>
+            <div class="header-right">
+                <div class="user-info">
+                    <span id="userName">Welcome, User</span>
+                    <button class="logout-btn" onclick="handleLogout()">Logout</button>
+                </div>
+                <div class="status-badge">
+                    <div class="status-dot"></div>
+                    <span id="connectionStatus">Connected</span>
+                </div>
+                <button class="btn btn-primary" onclick="refreshData()">
+                    <span id="refreshIcon">🔄</span> Refresh
+                </button>
+                <button class="btn btn-secondary" onclick="showReportModal()">
+                    📊 Generate Report
+                </button>
+            </div>
+        </header>
 
-        for (let i = 0; i < sortedDates.length; i++) {
-            const date = sortedDates[i];
-            const revenue = dateMap[date];
-            currentBalance += revenue;
+        <!-- Stats Grid -->
+        <div class="stats-grid fade-in">
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div>
+                        <div class="stat-label">Total Revenue</div>
+                        <div class="stat-value" id="totalRevenue">₱0.00</div>
+                        <div class="stat-change positive">
+                            <span>↑</span> Lifetime collections
+                        </div>
+                    </div>
+                    <div class="stat-icon icon-green">💰</div>
+                </div>
+            </div>
 
-            rows.push([
-                i === 0 ? beginningBalance : '',
-                date,
-                revenue,
-                date,
-                currentBalance
-            ]);
-        }
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div>
+                        <div class="stat-label">Today's Revenue</div>
+                        <div class="stat-value" id="todayRevenue">₱0.00</div>
+                        <div class="stat-change positive">
+                            <span id="todayChange">↑</span> <span id="todayChangeText">vs yesterday</span>
+                        </div>
+                    </div>
+                    <div class="stat-icon icon-blue">📅</div>
+                </div>
+            </div>
 
-        if (rows.length > 0) {
-            balanceSheet.getRange(2, 1, rows.length, 5).setValues(rows);
-            const amountRange = balanceSheet.getRange(2, 1, rows.length, 5);
-            amountRange.setNumberFormat('₱#,##0.00');
-            balanceSheet.getRange(2, 2, rows.length, 1).setNumberFormat('yyyy-mm-dd');
-            balanceSheet.getRange(2, 4, rows.length, 1).setNumberFormat('yyyy-mm-dd');
-        }
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div>
+                        <div class="stat-label">Current Balance</div>
+                        <div class="stat-value" id="currentBalance">₱0.00</div>
+                        <div class="stat-change">
+                            <span>Updated real-time</span>
+                        </div>
+                    </div>
+                    <div class="stat-icon icon-orange">🏦</div>
+                </div>
+            </div>
 
-        Logger.log('Balance sheet updated with ' + sortedDates.length + ' dates');
-        return { success: true, dates: sortedDates.length, finalBalance: currentBalance };
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div>
+                        <div class="stat-label">Total Records</div>
+                        <div class="stat-value" id="totalRecords">0</div>
+                        <div class="stat-change positive">
+                            <span>Transactions processed</span>
+                        </div>
+                    </div>
+                    <div class="stat-icon icon-red">📋</div>
+                </div>
+            </div>
+        </div>
 
-    } catch (error) {
-        Logger.log('Error updating balance: ' + error.toString());
-        return { success: false, error: error.toString() };
-    }
-}
+        <!-- Charts Section -->
+        <div class="charts-section fade-in">
+            <div class="chart-card full-width">
+                <div class="chart-header">
+                    <h3 class="chart-title">📈 Monthly Revenue Trend</h3>
+                    <select class="filter-select" id="chartPeriod" onchange="updateCharts()">
+                        <option value="6">Last 6 Months</option>
+                        <option value="12" selected>Last 12 Months</option>
+                        <option value="all">All Time</option>
+                    </select>
+                </div>
+                <div class="chart-container">
+                    <canvas id="revenueChart"></canvas>
+                </div>
+            </div>
 
-function updateBeginningBalance(newBalance) {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3 class="chart-title">🥧 Revenue by Nature</h3>
+                </div>
+                <div class="chart-container">
+                    <canvas id="natureChart"></canvas>
+                </div>
+            </div>
 
-        if (balanceSheet.getLastRow() < 2) {
-            balanceSheet.getRange(2, 1).setValue(newBalance);
-        } else {
-            balanceSheet.getRange(2, 1).setValue(newBalance);
-        }
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3 class="chart-title">📊 Daily Revenue (Last 7 Days)</h3>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+            </div>
+        </div>
 
-        updateBalanceSheet();
+        <!-- Recent Transactions Table -->
+        <div class="data-table-section fade-in">
+            <div class="table-header">
+                <h3 class="chart-title">📝 Recent Collections</h3>
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="Search by OR number, payor, or nature..." onkeyup="filterTable()">
+                    <span class="search-icon">🔍</span>
+                </div>
+                <div class="filters">
+                    <select class="filter-select" id="filterNature" onchange="filterTable()">
+                        <option value="">All Nature</option>
+                    </select>
+                    <select class="filter-select" id="filterDate" onchange="filterTable()">
+                        <option value="">All Dates</option>
+                        <option value="today">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                    </select>
+                </div>
+            </div>
+            <div style="overflow-x: auto;">
+                <table id="collectionsTable">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>RCD No</th>
+                            <th>OR Number</th>
+                            <th>Payor Name</th>
+                            <th>Nature of Collection</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr>
+                            <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                                Loading data...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
-        return { success: true, newBalance: newBalance };
+        <!-- Quick Actions -->
+        <div class="quick-actions fade-in">
+            <div class="action-card" onclick="showBalanceModal()">
+                <div class="action-icon">⚖️</div>
+                <div class="action-title">Update Balance</div>
+                <div class="action-desc">Set beginning balance</div>
+            </div>
+            <div class="action-card" onclick="exportToExcel()">
+                <div class="action-icon">📥</div>
+                <div class="action-title">Export Excel</div>
+                <div class="action-desc">Download report as CSV</div>
+            </div>
+            <div class="action-card" onclick="showAnalytics()">
+                <div class="action-icon">📊</div>
+                <div class="action-title">Deep Analytics</div>
+                <div class="action-desc">Advanced insights</div>
+            </div>
+        </div>
+    </div>
 
-    } catch (error) {
-        Logger.log('Error updating beginning balance: ' + error.toString());
-        return { success: false, error: error.toString() };
-    }
-}
+    <!-- Report Generation Modal -->
+    <div class="modal" id="reportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Generate Report</h2>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Report Type</label>
+                <select class="form-input" id="reportType" onchange="toggleReportInputs()">
+                    <option value="monthly">Monthly Report</option>
+                    <option value="yearly">Yearly Report</option>
+                    <option value="rcd">By RCD Number</option>
+                    <option value="custom">Custom Date Range</option>
+                </select>
+            </div>
+            <div class="form-group" id="monthInput">
+                <label class="form-label">Month</label>
+                <input type="month" class="form-input" id="reportMonth">
+            </div>
+            <div class="form-group" id="yearInput" style="display: none;">
+                <label class="form-label">Year</label>
+                <input type="number" class="form-input" id="reportYear" value="2024" min="2020" max="2030">
+            </div>
+            <div class="form-group" id="rcdInput" style="display: none;">
+                <label class="form-label">RCD Number</label>
+                <input type="text" class="form-input" id="reportRcd" placeholder="Enter RCD Number">
+            </div>
+            <div class="form-group" id="customDateRange" style="display: none;">
+                <label class="form-label">Date Range</label>
+                <div class="date-range-row">
+                    <input type="date" class="form-input" id="startDate" placeholder="Start Date">
+                    <span style="color: var(--text-secondary);">to</span>
+                    <input type="date" class="form-input" id="endDate" placeholder="End Date">
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="closeModal('reportModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="generateReport()">Generate</button>
+            </div>
+        </div>
+    </div>
 
-// ============================================
-// REPORT GENERATION FUNCTIONS
-// ============================================
+    <!-- Update Balance Modal -->
+    <div class="modal" id="balanceModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Update Beginning Balance</h2>
+            </div>
+            <div class="form-group">
+                <label class="form-label">New Beginning Balance (₱)</label>
+                <input type="number" class="form-input" id="newBalance" step="0.01" required>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="closeModal('balanceModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="updateBalance()">Update Balance</button>
+            </div>
+        </div>
+    </div>
 
-function generateReport(type, year, month, rcdNo) {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+    <script>
+        // Configuration - REPLACE THIS WITH YOUR GOOGLE APPS SCRIPT WEB APP URL
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyodtjXmFNB7OmTd_tjr8j04FklE2KVH_KMhJ3QgU_XwiuFU1Akw_Rm2RfbeCtnf9G7/exec';
+        
+        let chartInstances = {};
+        let collectionsData = [];
+        let dashboardData = {};
+        let currentUser = null;
 
-        if (!collectionsSheet) {
-            return { success: false, message: 'Collections sheet not found' };
-        }
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuthState();
+        });
 
-        const data = collectionsSheet.getRange(2, 1, collectionsSheet.getLastRow() - 1, 6).getValues();
-        let filteredData = [];
-
-        for (let i = 0; i < data.length; i++) {
-            const rowDate = new Date(data[i][0]);
-            const rowYear = rowDate.getFullYear();
-            const rowMonth = rowDate.getMonth() + 1;
-
-            let include = false;
-
-            if (type === 'monthly') {
-                include = (rowYear == year && rowMonth == month);
-            } else if (type === 'yearly') {
-                include = (rowYear == year);
-            } else if (type === 'rcd') {
-                include = (data[i][1] === rcdNo);
+        // Authentication Functions
+        function checkAuthState() {
+            const sessionUser = sessionStorage.getItem('user');
+            if (sessionUser) {
+                currentUser = JSON.parse(sessionUser);
+                showDashboard();
+            } else {
+                showLogin();
             }
-
-            if (include) {
-                filteredData.push({
-                    date: Utilities.formatDate(rowDate, 'Asia/Manila', 'yyyy-MM-dd'),
-                    orNumber: data[i][2],
-                    payor: data[i][3],
-                    nature: data[i][4],
-                    amount: data[i][5]
-                });
-            }
         }
 
-        return { success: true, reportData: filteredData };
-    } catch (error) {
-        Logger.log('Report generation error: ' + error);
-        return { success: false, message: error.toString() };
-    }
-}
-
-function generateExcel(type, year, month, rcdNo) {
-    try {
-        const reportResult = generateReport(type, year, month, rcdNo);
-
-        if (!reportResult.success) {
-            return reportResult;
+        function showLogin() {
+            document.getElementById('loginContainer').style.display = 'block';
+            document.getElementById('dashboardContainer').classList.remove('active');
         }
 
-        const rows = [['Date', 'OR Number', 'Payor', 'Nature of Collection', 'Amount']];
-
-        for (const row of reportResult.reportData) {
-            rows.push([row.date, row.orNumber, row.payor, row.nature, row.amount]);
+        function showDashboard() {
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('dashboardContainer').classList.add('active');
+            document.getElementById('userName').textContent = 'Welcome, ' + (currentUser ? currentUser.name : 'User');
+            initializeDashboard();
         }
 
-        const csvContent = rows.map(e => e.join(',')).join('\n');
-        const blob = Utilities.newBlob(csvContent, 'text/csv', 'Sampaloc_Revenue_Report.csv');
-
-        return {
-            success: true,
-            downloadUrl: DriveApp.createFile(blob).getDownloadUrl()
-        };
-    } catch (error) {
-        Logger.log('Excel generation error: ' + error);
-        return { success: false, message: error.toString() };
-    }
-}
-
-// ============================================
-// WEB APP ENDPOINTS
-// ============================================
-
-function doGet(e) {
-    const action = e.parameter.action;
-
-    switch(action) {
-        case 'authenticate':
-            return ContentService.createTextOutput(JSON.stringify(
-                authenticateUser(e.parameter.userId, e.parameter.password)
-            )).setMimeType(ContentService.MimeType.JSON);
-
-        case 'GenerateReport':
-            return ContentService.createTextOutput(JSON.stringify(
-                generateReport(e.parameter.type, e.parameter.year, e.parameter.month, e.parameter.rcdNo)
-            )).setMimeType(ContentService.MimeType.JSON);
-
-        case 'GenerateExcel':
-            return ContentService.createTextOutput(JSON.stringify(
-                generateExcel(e.parameter.type, e.parameter.year, e.parameter.month, e.parameter.rcdNo)
-            )).setMimeType(ContentService.MimeType.JSON);
-
-        case 'checkOR':
-            return ContentService.createTextOutput(JSON.stringify({
-                exists: checkORDuplicate(parseInt(e.parameter.orNumber))
-            })).setMimeType(ContentService.MimeType.JSON);
-
-        default:
-            // Default dashboard data
+        async function handleLogin(e) {
+            e.preventDefault();
+            const userId = document.getElementById('loginUserId').value;
+            const password = document.getElementById('loginPassword').value;
+            
             try {
-                const ss = SpreadsheetApp.openById(SHEET_ID);
-                const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
-                const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
-
-                const lastRow = collectionsSheet.getLastRow();
-                const totalRecords = lastRow > 1 ? lastRow - 1 : 0;
-
-                const today = new Date();
-                const todayStr = Utilities.formatDate(today, 'Asia/Manila', 'yyyy-MM-dd');
-                let todayRevenue = 0;
-
-                if (lastRow > 1) {
-                    const allData = collectionsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
-                    for (const row of allData) {
-                        if (Utilities.formatDate(new Date(row[0]), 'Asia/Manila', 'yyyy-MM-dd') === todayStr) {
-                            todayRevenue += parseFloat(row[5]) || 0;
-                        }
-                    }
+                const response = await fetch(`${SCRIPT_URL}?action=authenticate&userId=${encodeURIComponent(userId)}&password=${encodeURIComponent(password)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentUser = data;
+                    sessionStorage.setItem('user', JSON.stringify(data));
+                    showDashboard();
+                } else {
+                    const errorDiv = document.getElementById('loginError');
+                    errorDiv.textContent = data.message || 'Invalid credentials';
+                    errorDiv.classList.add('show');
                 }
-
-                let currentBalance = 0;
-                if (balanceSheet && balanceSheet.getLastRow() > 1) {
-                    const balanceData = balanceSheet.getRange(2, 1, balanceSheet.getLastRow() - 1, 5).getValues();
-                    currentBalance = parseFloat(balanceData[balanceData.length - 1][4]) || 0;
-                }
-
-                const monthlyData = {};
-                const monthlyLabels = [];
-
-                if (lastRow > 1) {
-                    const allData = collectionsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
-                    for (const row of allData) {
-                        const date = new Date(row[0]);
-                        const monthKey = Utilities.formatDate(date, 'Asia/Manila', 'yyyy-MM');
-
-                        if (!monthlyData[monthKey]) {
-                            monthlyData[monthKey] = 0;
-                            monthlyLabels.push(monthKey);
-                        }
-                        monthlyData[monthKey] += parseFloat(row[5]) || 0;
-                    }
-                }
-
-                const natureData = {};
-                const natureLabels = [];
-
-                if (lastRow > 1) {
-                    const allData = collectionsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
-                    for (const row of allData) {
-                        const nature = row[4];
-
-                        if (!natureData[nature]) {
-                            natureData[nature] = 0;
-                            natureLabels.push(nature);
-                        }
-                        natureData[nature] += parseFloat(row[5]) || 0;
-                    }
-                }
-
-                return ContentService.createTextOutput(JSON.stringify({
-                    status: 'success',
-                    totalRecords: totalRecords,
-                    todayRevenue: todayRevenue,
-                    currentBalance: currentBalance,
-                    monthlyLabels: monthlyLabels.sort(),
-                    monthlyData: monthlyLabels.sort().map(m => monthlyData[m]),
-                    natureLabels: natureLabels,
-                    natureData: natureLabels.map(nature => natureData[nature])
-                })).setMimeType(ContentService.MimeType.JSON);
-
             } catch (error) {
-                return ContentService.createTextOutput(JSON.stringify({
-                    status: 'error',
-                    message: error.toString()
-                })).setMimeType(ContentService.MimeType.JSON);
+                console.error('Login error:', error);
+                const errorDiv = document.getElementById('loginError');
+                errorDiv.textContent = 'Connection failed. Please try again.';
+                errorDiv.classList.add('show');
             }
-    }
-}
-
-function doPost(e) {
-    const lock = LockService.getScriptLock();
-    lock.tryLock(10000);
-
-    try {
-        const params = e.parameter;
-        Logger.log('Received: ' + JSON.stringify(params));
-
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-
-        if (params.action === 'addCollection') {
-            // Check for OR duplicate
-            const orNumber = parseInt(params['OR_Number']);
-            if (checkORDuplicate(orNumber)) {
-                return ContentService.createTextOutput(JSON.stringify({
-                    'result': 'error',
-                    'error': 'DUPLICATE_OR',
-                    'message': 'OR Number ' + orNumber + ' already exists in the system.',
-                    'orNumber': orNumber
-                })).setMimeType(ContentService.MimeType.JSON);
-            }
-
-            // Add to Collections sheet
-            const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
-            const nextRow = collectionsSheet.getLastRow() + 1;
-
-            const rowData = [
-                params['Date'] ? new Date(params['Date']) : new Date(),
-                params['RCD_No'] || '',
-                orNumber,
-                params['Payor_Name'] || params['Payor'] || '',
-                params['Nature_of_Collection'] || '',
-                parseFloat(params['Amount']) || 0,
-                new Date()
-            ];
-
-            collectionsSheet.getRange(nextRow, 1, 1, 7).setValues([rowData]);
-
-            // Format
-            collectionsSheet.getRange(nextRow, 1).setNumberFormat('yyyy-mm-dd');
-            collectionsSheet.getRange(nextRow, 6).setNumberFormat('₱#,##0.00');
-            collectionsSheet.getRange(nextRow, 7).setNumberFormat('yyyy-mm-dd hh:mm:ss');
-
-            // Update Balance Sheet
-            const balanceResult = updateBalanceSheet();
-
-            // Get updated daily total
-            const dateStr = params['Date'] || Utilities.formatDate(new Date(), 'Asia/Manila', 'yyyy-MM-dd');
-            const dailyTotal = getDailyRevenue(dateStr);
-
-            Logger.log('Added row ' + nextRow + ', updated balance: ' + JSON.stringify(balanceResult));
-
-            return ContentService.createTextOutput(JSON.stringify({
-                'result': 'success',
-                'row': nextRow,
-                'message': 'Collection recorded successfully',
-                'orNumber': orNumber,
-                'dailyTotal': dailyTotal,
-                'balanceUpdated': balanceResult.success,
-                'data': {
-                    'date': params['Date'],
-                    'rcdNo': params['RCD_No'],
-                    'orNumber': orNumber,
-                    'payor': params['Payor_Name'] || params['Payor'],
-                    'nature': params['Nature_of_Collection'],
-                    'amount': params['Amount']
-                }
-            })).setMimeType(ContentService.MimeType.JSON);
         }
 
-        return ContentService.createTextOutput(JSON.stringify({
-            result: 'error',
-            message: 'Invalid action'
-        })).setMimeType(ContentService.MimeType.JSON);
+        function handleLogout() {
+            currentUser = null;
+            sessionStorage.removeItem('user');
+            showLogin();
+            document.getElementById('loginForm').reset();
+            document.getElementById('loginError').classList.remove('show');
+        }
 
-    } catch (error) {
-        Logger.log('Error in doPost: ' + error.toString());
-        return ContentService.createTextOutput(JSON.stringify({
-            'result': 'error',
-            'error': error.toString(),
-            'message': 'Failed to record collection'
-        })).setMimeType(ContentService.MimeType.JSON);
+        async function initializeDashboard() {
+            await fetchDashboardData();
+            await fetchCollectionsData();
+            setupCharts();
+        }
 
-    } finally {
-        lock.releaseLock();
-    }
-}
+        async function fetchDashboardData() {
+            try {
+                const response = await fetch(`${SCRIPT_URL}?t=${Date.now()}`);
+                const data = await response.json();
+                
+                if (data.status === 'error') {
+                    throw new Error(data.message);
+                }
 
-// ============================================
-// TEST FUNCTIONS
-// ============================================
+                dashboardData = data;
+                updateStats(data);
+                populateNatureFilter(data.natureLabels);
+                
+            } catch (error) {
+                console.error('Error fetching dashboard data:', error);
+                showError('Failed to load dashboard data. Please check your connection.');
+                document.getElementById('connectionStatus').textContent = 'Disconnected';
+                document.getElementById('connectionStatus').style.color = 'var(--danger)';
+            }
+        }
 
-function testConnection() {
-    try {
-        const ss = SpreadsheetApp.openById(SHEET_ID);
-        const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
-        const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+        async function fetchCollectionsData() {
+            try {
+                const response = await fetch(`${SCRIPT_URL}?action=GenerateReport&type=monthly&year=${new Date().getFullYear()}&month=${new Date().getMonth() + 1}&t=${Date.now()}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    collectionsData = data.reportData.reverse();
+                    updateTable(collectionsData);
+                }
+            } catch (error) {
+                console.error('Error fetching collections:', error);
+            }
+        }
 
-        Logger.log('✅ Connected!');
-        Logger.log('Collections rows: ' + (collectionsSheet ? collectionsSheet.getLastRow() : 0));
-        Logger.log('Balance rows: ' + (balanceSheet ? balanceSheet.getLastRow() : 0));
+        function updateStats(data) {
+            const totalRevenue = data.monthlyData ? data.monthlyData.reduce((a, b) => a + b, 0) : 0;
+            
+            animateValue('totalRevenue', totalRevenue, '₱');
+            animateValue('todayRevenue', data.todayRevenue || 0, '₱');
+            animateValue('currentBalance', data.currentBalance || 0, '₱');
+            animateValue('totalRecords', data.totalRecords || 0, '');
+        }
 
-        return { success: true };
+        function animateValue(id, value, prefix) {
+            const element = document.getElementById(id);
+            const start = 0;
+            const duration = 1000;
+            const startTime = performance.now();
 
-    } catch (error) {
-        Logger.log('❌ Error: ' + error.toString());
-        return { success: false, error: error.toString() };
-    }
-}
+            function update(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const easeProgress = 1 - Math.pow(1 - progress, 3);
+                
+                const current = start + (value - start) * easeProgress;
+                element.textContent = prefix + current.toLocaleString('en-PH', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                });
+
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        function setupCharts() {
+            const ctx1 = document.getElementById('revenueChart').getContext('2d');
+            const gradient1 = ctx1.createLinearGradient(0, 0, 0, 400);
+            gradient1.addColorStop(0, 'rgba(102, 126, 234, 0.3)');
+            gradient1.addColorStop(1, 'rgba(102, 126, 234, 0.0)');
+
+            chartInstances.revenue = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: dashboardData.monthlyLabels || [],
+                    datasets: [{
+                        label: 'Revenue (₱)',
+                        data: dashboardData.monthlyData || [],
+                        borderColor: '#667eea',
+                        backgroundColor: gradient1,
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: '#667eea',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 6,
+                        pointHoverRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(45, 55, 72, 0.9)',
+                            padding: 12,
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: function(context) {
+                                    return '₱' + context.parsed.y.toLocaleString('en-PH', {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return '₱' + (value / 1000) + 'k';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+
+            const ctx2 = document.getElementById('natureChart').getContext('2d');
+            const natureColors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#43e97b', '#fa709a'];
+            
+            chartInstances.nature = new Chart(ctx2, {
+                type: 'doughnut',
+                data: {
+                    labels: dashboardData.natureLabels || [],
+                    datasets: [{
+                        data: dashboardData.natureData || [],
+                        backgroundColor: natureColors,
+                        borderWidth: 0,
+                        hoverOffset: 10
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 15,
+                                usePointStyle: true,
+                                pointStyle: 'circle'
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.parsed;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((value / total) * 100).toFixed(1);
+                                    return label + ': ₱' + value.toLocaleString() + ' (' + percentage + '%)';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            updateDailyChart();
+        }
+
+        function updateDailyChart() {
+            const ctx3 = document.getElementById('dailyChart').getContext('2d');
+            
+            const days = [];
+            const data = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                days.push(d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }));
+                
+                const dayStr = d.toISOString().split('T')[0];
+                const dayRevenue = collectionsData
+                    .filter(c => c.date === dayStr)
+                    .reduce((sum, c) => sum + parseFloat(c.amount), 0);
+                data.push(dayRevenue);
+            }
+
+            if (chartInstances.daily) {
+                chartInstances.daily.destroy();
+            }
+
+            chartInstances.daily = new Chart(ctx3, {
+                type: 'bar',
+                data: {
+                    labels: days,
+                    datasets: [{
+                        label: 'Daily Revenue',
+                        data: data,
+                        backgroundColor: 'rgba(118, 75, 162, 0.8)',
+                        borderRadius: 8,
+                        borderSkipped: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return '₱' + (value / 1000) + 'k';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateTable(data) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px;">No records found</td></tr>';
+                return;
+            }
+
+            data.slice(0, 50).forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${formatDate(row.date)}</td>
+                    <td>${row.rcdNo || '-'}</td>
+                    <td><strong>${row.orNumber}</strong></td>
+                    <td>${row.payor}</td>
+                    <td><span class="badge badge-success">${row.nature}</span></td>
+                    <td class="amount-cell">₱${parseFloat(row.amount).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                    <td><span class="badge badge-success">Completed</span></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function filterTable() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const nature = document.getElementById('filterNature').value;
+            const dateFilter = document.getElementById('filterDate').value;
+
+            let filtered = collectionsData.filter(row => {
+                const matchesSearch = !search || 
+                    row.orNumber.toString().includes(search) ||
+                    row.payor.toLowerCase().includes(search) ||
+                    row.nature.toLowerCase().includes(search);
+                
+                const matchesNature = !nature || row.nature === nature;
+
+                let matchesDate = true;
+                if (dateFilter === 'today') {
+                    matchesDate = row.date === new Date().toISOString().split('T')[0];
+                } else if (dateFilter === 'week') {
+                    const weekAgo = new Date();
+                    weekAgo.setDate(weekAgo.getDate() - 7);
+                    matchesDate = new Date(row.date) >= weekAgo;
+                } else if (dateFilter === 'month') {
+                    const now = new Date();
+                    const rowDate = new Date(row.date);
+                    matchesDate = rowDate.getMonth() === now.getMonth() && rowDate.getFullYear() === now.getFullYear();
+                }
+
+                return matchesSearch && matchesNature && matchesDate;
+            });
+
+            updateTable(filtered);
+        }
+
+        function populateNatureFilter(natures) {
+            const select = document.getElementById('filterNature');
+            natures.forEach(nature => {
+                const option = document.createElement('option');
+                option.value = nature;
+                option.textContent = nature;
+                select.appendChild(option);
+            });
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+
+        // Modal Functions
+        function showReportModal() {
+            document.getElementById('reportModal').classList.add('active');
+        }
+
+        function showBalanceModal() {
+            document.getElementById('balanceModal').classList.add('active');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        function toggleReportInputs() {
+            const type = document.getElementById('reportType').value;
+            document.getElementById('monthInput').style.display = type === 'monthly' ? 'block' : 'none';
+            document.getElementById('yearInput').style.display = type === 'yearly' ? 'block' : 'none';
+            document.getElementById('rcdInput').style.display = type === 'rcd' ? 'block' : 'none';
+            document.getElementById('customDateRange').style.display = type === 'custom' ? 'block' : 'none';
+        }
+
+        // Action Functions
+        async function refreshData() {
+            const icon = document.getElementById('refreshIcon');
+            icon.classList.add('loading');
+            
+            await initializeDashboard();
+            
+            icon.classList.remove('loading');
+            icon.textContent = '✓';
+            setTimeout(() => icon.textContent = '🔄', 2000);
+        }
+
+        async function updateBalance() {
+            const newBalance = document.getElementById('newBalance').value;
+            
+            try {
+                const response = await fetch(`${SCRIPT_URL}?action=updateBalance&balance=${newBalance}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Balance updated successfully!');
+                    closeModal('balanceModal');
+                    refreshData();
+                } else {
+                    alert('Error updating balance');
+                }
+            } catch (error) {
+                alert('Failed to update balance');
+            }
+        }
+
+        async function generateReport() {
+            const type = document.getElementById('reportType').value;
+            let url = `${SCRIPT_URL}?action=GenerateExcel&type=${type}`;
+            
+            if (type === 'monthly') {
+                const [year, month] = document.getElementById('reportMonth').value.split('-');
+                url += `&year=${year}&month=${month}`;
+            } else if (type === 'yearly') {
+                url += `&year=${document.getElementById('reportYear').value}`;
+            } else if (type === 'rcd') {
+                url += `&rcdNo=${document.getElementById('reportRcd').value}`;
+            } else if (type === 'custom') {
+                const startDate = document.getElementById('startDate').value;
+                const endDate = document.getElementById('endDate').value;
+                if (startDate && endDate) {
+                    url += `&startDate=${startDate}&endDate=${endDate}`;
+                }
+            }
+
+            if (type === 'custom' && (!document.getElementById('startDate').value || !document.getElementById('endDate').value)) {
+                alert('Please select both start and end dates for custom range');
+                return;
+            }
+
+            window.open(url, '_blank');
+            closeModal('reportModal');
+        }
+
+        function exportToExcel() {
+            const now = new Date();
+            const url = `${SCRIPT_URL}?action=GenerateExcel&type=monthly&year=${now.getFullYear()}&month=${now.getMonth() + 1}`;
+            window.open(url, '_blank');
+        }
+
+        function showAnalytics() {
+            alert('Deep Analytics feature coming soon! This will include:\n\n• Trend analysis\n• Predictive forecasting\n• Comparative reports\n• Custom date ranges');
+        }
+
+        function showError(message) {
+            const div = document.createElement('div');
+            div.className = 'error-message';
+            div.innerHTML = `<span>⚠️</span> ${message}`;
+            document.querySelector('.dashboard-container').prepend(div);
+            setTimeout(() => div.remove(), 5000);
+        }
+
+        // Close modals on outside click
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.classList.remove('active');
+            }
+        }
+
+        function updateCharts() {
+            refreshData();
+        }
+    </script>
+</body>
+</html>
