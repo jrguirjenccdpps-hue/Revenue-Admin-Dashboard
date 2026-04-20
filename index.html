@@ -98,11 +98,20 @@
             transform: translateY(-2px);
         }
 
+        .login-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .login-error {
             color: var(--danger);
             font-size: 0.9rem;
             margin-top: 10px;
             display: none;
+            padding: 10px;
+            background: rgba(245, 101, 101, 0.1);
+            border-radius: 8px;
         }
 
         .login-error.show {
@@ -628,7 +637,19 @@
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(102, 126, 234, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
     </style>
+<base target="_blank">
 </head>
 <body>
     <!-- Login Screen -->
@@ -641,7 +662,9 @@
             <input type="text" class="login-input" id="loginUserId" placeholder="User ID" required>
             <input type="password" class="login-input" id="loginPassword" placeholder="Password" required>
             <div class="login-error" id="loginError"></div>
-            <button type="submit" class="login-btn">Sign In</button>
+            <button type="submit" class="login-btn" id="loginBtn">
+                <span id="btnText">Sign In</span>
+            </button>
         </form>
     </div>
 
@@ -885,8 +908,10 @@
     </div>
 
     <script>
-        // Configuration - REPLACE THIS WITH YOUR GOOGLE APPS SCRIPT WEB APP URL
-        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyodtjXmFNB7OmTd_tjr8j04FklE2KVH_KMhJ3QgU_XwiuFU1Akw_Rm2RfbeCtnf9G7/exec';
+        // ============================================
+        // CONFIGURATION - REPLACE WITH YOUR NEW WEB APP URL
+        // ============================================
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx1uA8pMRMM6zV5L6Pao1V8iNSShsiEn0M8lPHcqtHiXLo7c9uXNdxX6BAtQn4BHJ63/exec';
         
         let chartInstances = {};
         let collectionsData = [];
@@ -898,7 +923,10 @@
             checkAuthState();
         });
 
-        // Authentication Functions
+        // ============================================
+        // AUTHENTICATION FUNCTIONS
+        // ============================================
+
         function checkAuthState() {
             const sessionUser = sessionStorage.getItem('user');
             if (sessionUser) {
@@ -923,11 +951,34 @@
 
         async function handleLogin(e) {
             e.preventDefault();
+            
             const userId = document.getElementById('loginUserId').value;
             const password = document.getElementById('loginPassword').value;
+            const loginBtn = document.getElementById('loginBtn');
+            const btnText = document.getElementById('btnText');
+            const errorDiv = document.getElementById('loginError');
+            
+            // Show loading state
+            loginBtn.disabled = true;
+            btnText.innerHTML = '<span class="spinner"></span>Signing in...';
+            errorDiv.classList.remove('show');
             
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=authenticate&userId=${encodeURIComponent(userId)}&password=${encodeURIComponent(password)}`);
+                // Use no-cors mode for Google Apps Script or add proper headers
+                const url = `${SCRIPT_URL}?action=authenticate&userId=${encodeURIComponent(userId)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.success) {
@@ -935,16 +986,21 @@
                     sessionStorage.setItem('user', JSON.stringify(data));
                     showDashboard();
                 } else {
-                    const errorDiv = document.getElementById('loginError');
-                    errorDiv.textContent = data.message || 'Invalid credentials';
-                    errorDiv.classList.add('show');
+                    showLoginError(data.message || 'Invalid credentials');
                 }
             } catch (error) {
                 console.error('Login error:', error);
-                const errorDiv = document.getElementById('loginError');
-                errorDiv.textContent = 'Connection failed. Please try again.';
-                errorDiv.classList.add('show');
+                showLoginError('Connection failed. Please check your internet connection and try again.');
+            } finally {
+                loginBtn.disabled = false;
+                btnText.textContent = 'Sign In';
             }
+        }
+
+        function showLoginError(message) {
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
         }
 
         function handleLogout() {
@@ -955,15 +1011,35 @@
             document.getElementById('loginError').classList.remove('show');
         }
 
+        // ============================================
+        // DASHBOARD FUNCTIONS
+        // ============================================
+
         async function initializeDashboard() {
-            await fetchDashboardData();
-            await fetchCollectionsData();
-            setupCharts();
+            try {
+                await fetchDashboardData();
+                await fetchCollectionsData();
+                setupCharts();
+            } catch (error) {
+                console.error('Dashboard initialization error:', error);
+                showError('Failed to initialize dashboard. Please refresh the page.');
+            }
         }
 
         async function fetchDashboardData() {
             try {
-                const response = await fetch(`${SCRIPT_URL}?t=${Date.now()}`);
+                const response = await fetch(`${SCRIPT_URL}?t=${Date.now()}`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.status === 'error') {
@@ -972,19 +1048,38 @@
 
                 dashboardData = data;
                 updateStats(data);
-                populateNatureFilter(data.natureLabels);
+                populateNatureFilter(data.natureLabels || []);
+                
+                // Update connection status
+                document.getElementById('connectionStatus').textContent = 'Connected';
+                document.getElementById('connectionStatus').style.color = 'var(--success)';
                 
             } catch (error) {
                 console.error('Error fetching dashboard data:', error);
                 showError('Failed to load dashboard data. Please check your connection.');
                 document.getElementById('connectionStatus').textContent = 'Disconnected';
                 document.getElementById('connectionStatus').style.color = 'var(--danger)';
+                throw error;
             }
         }
 
         async function fetchCollectionsData() {
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=GenerateReport&type=monthly&year=${new Date().getFullYear()}&month=${new Date().getMonth() + 1}&t=${Date.now()}`);
+                const now = new Date();
+                const url = `${SCRIPT_URL}?action=GenerateReport&type=monthly&year=${now.getFullYear()}&month=${now.getMonth() + 1}&t=${Date.now()}`;
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.success) {
@@ -993,6 +1088,8 @@
                 }
             } catch (error) {
                 console.error('Error fetching collections:', error);
+                collectionsData = [];
+                updateTable([]);
             }
         }
 
@@ -1030,11 +1127,25 @@
             requestAnimationFrame(update);
         }
 
+        // ============================================
+        // CHART FUNCTIONS
+        // ============================================
+
         function setupCharts() {
+            setupRevenueChart();
+            setupNatureChart();
+            updateDailyChart();
+        }
+
+        function setupRevenueChart() {
             const ctx1 = document.getElementById('revenueChart').getContext('2d');
             const gradient1 = ctx1.createLinearGradient(0, 0, 0, 400);
             gradient1.addColorStop(0, 'rgba(102, 126, 234, 0.3)');
             gradient1.addColorStop(1, 'rgba(102, 126, 234, 0.0)');
+
+            if (chartInstances.revenue) {
+                chartInstances.revenue.destroy();
+            }
 
             chartInstances.revenue = new Chart(ctx1, {
                 type: 'line',
@@ -1094,10 +1205,16 @@
                     }
                 }
             });
+        }
 
+        function setupNatureChart() {
             const ctx2 = document.getElementById('natureChart').getContext('2d');
             const natureColors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe', '#43e97b', '#fa709a'];
             
+            if (chartInstances.nature) {
+                chartInstances.nature.destroy();
+            }
+
             chartInstances.nature = new Chart(ctx2, {
                 type: 'doughnut',
                 data: {
@@ -1127,7 +1244,7 @@
                                     const label = context.label || '';
                                     const value = context.parsed;
                                     const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                    const percentage = ((value / total) * 100).toFixed(1);
+                                    const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
                                     return label + ': ₱' + value.toLocaleString() + ' (' + percentage + '%)';
                                 }
                             }
@@ -1135,8 +1252,6 @@
                     }
                 }
             });
-
-            updateDailyChart();
         }
 
         function updateDailyChart() {
@@ -1152,7 +1267,7 @@
                 const dayStr = d.toISOString().split('T')[0];
                 const dayRevenue = collectionsData
                     .filter(c => c.date === dayStr)
-                    .reduce((sum, c) => sum + parseFloat(c.amount), 0);
+                    .reduce((sum, c) => sum + parseFloat(c.amount || 0), 0);
                 data.push(dayRevenue);
             }
 
@@ -1200,11 +1315,15 @@
             });
         }
 
+        // ============================================
+        // TABLE FUNCTIONS
+        // ============================================
+
         function updateTable(data) {
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
 
-            if (data.length === 0) {
+            if (!data || data.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px;">No records found</td></tr>';
                 return;
             }
@@ -1214,10 +1333,10 @@
                 tr.innerHTML = `
                     <td>${formatDate(row.date)}</td>
                     <td>${row.rcdNo || '-'}</td>
-                    <td><strong>${row.orNumber}</strong></td>
-                    <td>${row.payor}</td>
-                    <td><span class="badge badge-success">${row.nature}</span></td>
-                    <td class="amount-cell">₱${parseFloat(row.amount).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
+                    <td><strong>${row.orNumber || '-'}</strong></td>
+                    <td>${row.payor || '-'}</td>
+                    <td><span class="badge badge-success">${row.nature || '-'}</span></td>
+                    <td class="amount-cell">₱${parseFloat(row.amount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</td>
                     <td><span class="badge badge-success">Completed</span></td>
                 `;
                 tbody.appendChild(tr);
@@ -1231,9 +1350,9 @@
 
             let filtered = collectionsData.filter(row => {
                 const matchesSearch = !search || 
-                    row.orNumber.toString().includes(search) ||
-                    row.payor.toLowerCase().includes(search) ||
-                    row.nature.toLowerCase().includes(search);
+                    (row.orNumber && row.orNumber.toString().includes(search)) ||
+                    (row.payor && row.payor.toLowerCase().includes(search)) ||
+                    (row.nature && row.nature.toLowerCase().includes(search));
                 
                 const matchesNature = !nature || row.nature === nature;
 
@@ -1258,23 +1377,40 @@
 
         function populateNatureFilter(natures) {
             const select = document.getElementById('filterNature');
-            natures.forEach(nature => {
-                const option = document.createElement('option');
-                option.value = nature;
-                option.textContent = nature;
-                select.appendChild(option);
-            });
+            // Clear existing options except first
+            while (select.options.length > 1) {
+                select.remove(1);
+            }
+            
+            if (natures && natures.length > 0) {
+                natures.forEach(nature => {
+                    const option = document.createElement('option');
+                    option.value = nature;
+                    option.textContent = nature;
+                    select.appendChild(option);
+                });
+            }
         }
 
         function formatDate(dateStr) {
             if (!dateStr) return '-';
-            const d = new Date(dateStr);
-            return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+            try {
+                const d = new Date(dateStr);
+                return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+            } catch (e) {
+                return dateStr;
+            }
         }
 
-        // Modal Functions
+        // ============================================
+        // MODAL FUNCTIONS
+        // ============================================
+
         function showReportModal() {
             document.getElementById('reportModal').classList.add('active');
+            // Set default month to current month
+            const now = new Date();
+            document.getElementById('reportMonth').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         }
 
         function showBalanceModal() {
@@ -1293,23 +1429,44 @@
             document.getElementById('customDateRange').style.display = type === 'custom' ? 'block' : 'none';
         }
 
-        // Action Functions
+        // ============================================
+        // ACTION FUNCTIONS
+        // ============================================
+
         async function refreshData() {
             const icon = document.getElementById('refreshIcon');
             icon.classList.add('loading');
             
-            await initializeDashboard();
-            
-            icon.classList.remove('loading');
-            icon.textContent = '✓';
-            setTimeout(() => icon.textContent = '🔄', 2000);
+            try {
+                await initializeDashboard();
+                icon.textContent = '✓';
+                setTimeout(() => {
+                    icon.textContent = '🔄';
+                    icon.classList.remove('loading');
+                }, 2000);
+            } catch (error) {
+                icon.classList.remove('loading');
+                icon.textContent = '🔄';
+            }
         }
 
         async function updateBalance() {
             const newBalance = document.getElementById('newBalance').value;
             
+            if (!newBalance || isNaN(newBalance)) {
+                alert('Please enter a valid balance amount');
+                return;
+            }
+            
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=updateBalance&balance=${newBalance}`);
+                const response = await fetch(`${SCRIPT_URL}?action=updateBalance&balance=${newBalance}&t=${Date.now()}`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
                 const result = await response.json();
                 
                 if (result.success) {
@@ -1317,10 +1474,11 @@
                     closeModal('balanceModal');
                     refreshData();
                 } else {
-                    alert('Error updating balance');
+                    alert('Error updating balance: ' + (result.error || 'Unknown error'));
                 }
             } catch (error) {
-                alert('Failed to update balance');
+                console.error('Update balance error:', error);
+                alert('Failed to update balance. Please try again.');
             }
         }
 
@@ -1329,23 +1487,30 @@
             let url = `${SCRIPT_URL}?action=GenerateExcel&type=${type}`;
             
             if (type === 'monthly') {
-                const [year, month] = document.getElementById('reportMonth').value.split('-');
+                const monthValue = document.getElementById('reportMonth').value;
+                if (!monthValue) {
+                    alert('Please select a month');
+                    return;
+                }
+                const [year, month] = monthValue.split('-');
                 url += `&year=${year}&month=${month}`;
             } else if (type === 'yearly') {
                 url += `&year=${document.getElementById('reportYear').value}`;
             } else if (type === 'rcd') {
-                url += `&rcdNo=${document.getElementById('reportRcd').value}`;
+                const rcdNo = document.getElementById('reportRcd').value;
+                if (!rcdNo) {
+                    alert('Please enter an RCD number');
+                    return;
+                }
+                url += `&rcdNo=${encodeURIComponent(rcdNo)}`;
             } else if (type === 'custom') {
                 const startDate = document.getElementById('startDate').value;
                 const endDate = document.getElementById('endDate').value;
-                if (startDate && endDate) {
-                    url += `&startDate=${startDate}&endDate=${endDate}`;
+                if (!startDate || !endDate) {
+                    alert('Please select both start and end dates for custom range');
+                    return;
                 }
-            }
-
-            if (type === 'custom' && (!document.getElementById('startDate').value || !document.getElementById('endDate').value)) {
-                alert('Please select both start and end dates for custom range');
-                return;
+                url += `&startDate=${startDate}&endDate=${endDate}`;
             }
 
             window.open(url, '_blank');
@@ -1363,11 +1528,19 @@
         }
 
         function showError(message) {
+            // Remove existing error messages
+            const existingErrors = document.querySelectorAll('.error-message');
+            existingErrors.forEach(el => el.remove());
+            
             const div = document.createElement('div');
             div.className = 'error-message';
             div.innerHTML = `<span>⚠️</span> ${message}`;
             document.querySelector('.dashboard-container').prepend(div);
             setTimeout(() => div.remove(), 5000);
+        }
+
+        function updateCharts() {
+            refreshData();
         }
 
         // Close modals on outside click
@@ -1376,10 +1549,6 @@
                 event.target.classList.remove('active');
             }
         }
-
-        function updateCharts() {
-            refreshData();
-        }
     </script>
 </body>
-</html>
+</html>s
