@@ -1,0 +1,556 @@
+// ============================================
+// GOOGLE APPS SCRIPT BACKEND
+// Barangay Sampaloc Revenue System
+// Combined Version - Tanay, Rizal
+// ============================================
+
+const SHEET_ID = '1SxLBdXVptmGlrl5u1WDtd6TSGcwTMrqU_nD2RrgXnis';
+const COLLECTIONS_SHEET = 'Collections';
+const BALANCE_SHEET = 'Balance';
+const USER_SHEET = 'User';
+
+// ============================================
+// INITIALIZATION & SETUP
+// ============================================
+
+function initialSetup() {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+
+        // Setup Collections Sheet
+        let collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+        if (!collectionsSheet) {
+            collectionsSheet = ss.insertSheet(COLLECTIONS_SHEET);
+        }
+        collectionsSheet.clear();
+        const collectionHeaders = ['Date', 'RCD_No', 'OR_Number', 'Payor_Name', 'Nature_of_Collection', 'Amount', 'Timestamp'];
+        collectionsSheet.getRange(1, 1, 1, collectionHeaders.length).setValues([collectionHeaders]);
+        formatHeaders(collectionsSheet, collectionHeaders.length);
+
+        // Setup Balance Sheet
+        let balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+        if (!balanceSheet) {
+            balanceSheet = ss.insertSheet(BALANCE_SHEET);
+        }
+        balanceSheet.clear();
+        const balanceHeaders = ['Beginning_Balance', 'Date', 'Total_Revenue', 'Date', 'Ending_Balance'];
+        balanceSheet.getRange(1, 1, 1, balanceHeaders.length).setValues([balanceHeaders]);
+        formatHeaders(balanceSheet, balanceHeaders.length);
+
+        // Add initial row with zero beginning balance
+        balanceSheet.getRange(2, 1, 1, 5).setValues([[0, '', 0, '', 0]]);
+
+        Logger.log('✅ Setup completed successfully!');
+        return 'Setup completed! Sheets created: Collections, Balance';
+
+    } catch (error) {
+        Logger.log('❌ Error in initialSetup: ' + error.toString());
+        throw error;
+    }
+}
+
+function formatHeaders(sheet, numCols) {
+    const headerRange = sheet.getRange(1, 1, 1, numCols);
+    headerRange.setFontWeight('bold');
+    headerRange.setBackground('#667eea');
+    headerRange.setFontColor('white');
+    headerRange.setHorizontalAlignment('center');
+    sheet.autoResizeColumns(1, numCols);
+}
+
+// ============================================
+// USER AUTHENTICATION
+// ============================================
+
+function authenticateUser(userId, password) {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const userSheet = ss.getSheetByName(USER_SHEET);
+
+        if (!userSheet) {
+            return { success: false, message: 'User sheet not found' };
+        }
+
+        const userData = userSheet.getRange(2, 1, userSheet.getLastRow() - 1, 4).getValues();
+
+        for (let i = 0; i < userData.length; i++) {
+            if (userData[i][0] === userId && userData[i][1] === password) {
+                return {
+                    success: true,
+                    name: userData[i][2],
+                    position: userData[i][3]
+                };
+            }
+        }
+
+        return { success: false, message: 'Invalid credentials' };
+    } catch (error) {
+        Logger.log('Auth error: ' + error);
+        return { success: false, message: 'Authentication error' };
+    }
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+function formatDate(date) {
+    if (!date) return '';
+    const d = new Date(date);
+    return d.getFullYear() + '-' + 
+           String(d.getMonth() + 1).padStart(2, '0') + '-' + 
+           String(d.getDate()).padStart(2, '0');
+}
+
+function checkORDuplicate(orNumber) {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const sheet = ss.getSheetByName(COLLECTIONS_SHEET);
+
+        if (sheet.getLastRow() <= 1) return false;
+
+        const orColumn = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
+
+        for (let i = 0; i < orColumn.length; i++) {
+            if (parseInt(orColumn[i][0]) === parseInt(orNumber)) {
+                return true;
+            }
+        }
+        return false;
+
+    } catch (error) {
+        Logger.log('Error checking OR duplicate: ' + error.toString());
+        return false;
+    }
+}
+
+function getDailyRevenue(dateStr) {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const sheet = ss.getSheetByName(COLLECTIONS_SHEET);
+
+        if (sheet.getLastRow() <= 1) return 0;
+
+        const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
+        let total = 0;
+
+        for (let i = 0; i < data.length; i++) {
+            const rowDate = Utilities.formatDate(new Date(data[i][0]), 'Asia/Manila', 'yyyy-MM-dd');
+            if (rowDate === dateStr) {
+                total += parseFloat(data[i][5]) || 0;
+            }
+        }
+
+        return total;
+
+    } catch (error) {
+        Logger.log('Error getting daily revenue: ' + error.toString());
+        return 0;
+    }
+}
+
+function getUsedORNumbers() {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const sheet = ss.getSheetByName(COLLECTIONS_SHEET);
+
+        if (sheet.getLastRow() <= 1) return [];
+
+        const orData = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
+        return orData.map(row => parseInt(row[0])).filter(n => !isNaN(n));
+
+    } catch (error) {
+        Logger.log('Error getting OR numbers: ' + error.toString());
+        return [];
+    }
+}
+
+// ============================================
+// BALANCE SHEET MANAGEMENT
+// ============================================
+
+function updateBalanceSheet() {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+        const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+
+        if (collectionsSheet.getLastRow() <= 1) return;
+
+        const data = collectionsSheet.getRange(2, 1, collectionsSheet.getLastRow() - 1, 6).getValues();
+        const dateMap = {};
+
+        for (let i = 0; i < data.length; i++) {
+            const dateStr = formatDate(data[i][0]);
+            const amount = parseFloat(data[i][5]) || 0;
+
+            if (dateStr) {
+                if (!dateMap[dateStr]) {
+                    dateMap[dateStr] = 0;
+                }
+                dateMap[dateStr] += amount;
+            }
+        }
+
+        const sortedDates = Object.keys(dateMap).sort();
+        let beginningBalance = 0;
+
+        if (balanceSheet.getLastRow() >= 2) {
+            const firstRow = balanceSheet.getRange(2, 1, 1, 1).getValue();
+            beginningBalance = parseFloat(firstRow) || 0;
+        }
+
+        if (balanceSheet.getLastRow() > 1) {
+            balanceSheet.getRange(2, 1, balanceSheet.getLastRow() - 1, 5).clear();
+        }
+
+        let currentBalance = beginningBalance;
+        const rows = [];
+
+        for (let i = 0; i < sortedDates.length; i++) {
+            const date = sortedDates[i];
+            const revenue = dateMap[date];
+            currentBalance += revenue;
+
+            rows.push([
+                i === 0 ? beginningBalance : '',
+                date,
+                revenue,
+                date,
+                currentBalance
+            ]);
+        }
+
+        if (rows.length > 0) {
+            balanceSheet.getRange(2, 1, rows.length, 5).setValues(rows);
+            const amountRange = balanceSheet.getRange(2, 1, rows.length, 5);
+            amountRange.setNumberFormat('₱#,##0.00');
+            balanceSheet.getRange(2, 2, rows.length, 1).setNumberFormat('yyyy-mm-dd');
+            balanceSheet.getRange(2, 4, rows.length, 1).setNumberFormat('yyyy-mm-dd');
+        }
+
+        Logger.log('Balance sheet updated with ' + sortedDates.length + ' dates');
+        return { success: true, dates: sortedDates.length, finalBalance: currentBalance };
+
+    } catch (error) {
+        Logger.log('Error updating balance: ' + error.toString());
+        return { success: false, error: error.toString() };
+    }
+}
+
+function updateBeginningBalance(newBalance) {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+
+        if (balanceSheet.getLastRow() < 2) {
+            balanceSheet.getRange(2, 1).setValue(newBalance);
+        } else {
+            balanceSheet.getRange(2, 1).setValue(newBalance);
+        }
+
+        updateBalanceSheet();
+
+        return { success: true, newBalance: newBalance };
+
+    } catch (error) {
+        Logger.log('Error updating beginning balance: ' + error.toString());
+        return { success: false, error: error.toString() };
+    }
+}
+
+// ============================================
+// REPORT GENERATION FUNCTIONS
+// ============================================
+
+function generateReport(type, year, month, rcdNo) {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+
+        if (!collectionsSheet) {
+            return { success: false, message: 'Collections sheet not found' };
+        }
+
+        const data = collectionsSheet.getRange(2, 1, collectionsSheet.getLastRow() - 1, 6).getValues();
+        let filteredData = [];
+
+        for (let i = 0; i < data.length; i++) {
+            const rowDate = new Date(data[i][0]);
+            const rowYear = rowDate.getFullYear();
+            const rowMonth = rowDate.getMonth() + 1;
+
+            let include = false;
+
+            if (type === 'monthly') {
+                include = (rowYear == year && rowMonth == month);
+            } else if (type === 'yearly') {
+                include = (rowYear == year);
+            } else if (type === 'rcd') {
+                include = (data[i][1] === rcdNo);
+            }
+
+            if (include) {
+                filteredData.push({
+                    date: Utilities.formatDate(rowDate, 'Asia/Manila', 'yyyy-MM-dd'),
+                    orNumber: data[i][2],
+                    payor: data[i][3],
+                    nature: data[i][4],
+                    amount: data[i][5]
+                });
+            }
+        }
+
+        return { success: true, reportData: filteredData };
+    } catch (error) {
+        Logger.log('Report generation error: ' + error);
+        return { success: false, message: error.toString() };
+    }
+}
+
+function generateExcel(type, year, month, rcdNo) {
+    try {
+        const reportResult = generateReport(type, year, month, rcdNo);
+
+        if (!reportResult.success) {
+            return reportResult;
+        }
+
+        const rows = [['Date', 'OR Number', 'Payor', 'Nature of Collection', 'Amount']];
+
+        for (const row of reportResult.reportData) {
+            rows.push([row.date, row.orNumber, row.payor, row.nature, row.amount]);
+        }
+
+        const csvContent = rows.map(e => e.join(',')).join('\n');
+        const blob = Utilities.newBlob(csvContent, 'text/csv', 'Sampaloc_Revenue_Report.csv');
+
+        return {
+            success: true,
+            downloadUrl: DriveApp.createFile(blob).getDownloadUrl()
+        };
+    } catch (error) {
+        Logger.log('Excel generation error: ' + error);
+        return { success: false, message: error.toString() };
+    }
+}
+
+// ============================================
+// WEB APP ENDPOINTS
+// ============================================
+
+function doGet(e) {
+    const action = e.parameter.action;
+
+    switch(action) {
+        case 'authenticate':
+            return ContentService.createTextOutput(JSON.stringify(
+                authenticateUser(e.parameter.userId, e.parameter.password)
+            )).setMimeType(ContentService.MimeType.JSON);
+
+        case 'GenerateReport':
+            return ContentService.createTextOutput(JSON.stringify(
+                generateReport(e.parameter.type, e.parameter.year, e.parameter.month, e.parameter.rcdNo)
+            )).setMimeType(ContentService.MimeType.JSON);
+
+        case 'GenerateExcel':
+            return ContentService.createTextOutput(JSON.stringify(
+                generateExcel(e.parameter.type, e.parameter.year, e.parameter.month, e.parameter.rcdNo)
+            )).setMimeType(ContentService.MimeType.JSON);
+
+        case 'checkOR':
+            return ContentService.createTextOutput(JSON.stringify({
+                exists: checkORDuplicate(parseInt(e.parameter.orNumber))
+            })).setMimeType(ContentService.MimeType.JSON);
+
+        default:
+            // Default dashboard data
+            try {
+                const ss = SpreadsheetApp.openById(SHEET_ID);
+                const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+                const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+
+                const lastRow = collectionsSheet.getLastRow();
+                const totalRecords = lastRow > 1 ? lastRow - 1 : 0;
+
+                const today = new Date();
+                const todayStr = Utilities.formatDate(today, 'Asia/Manila', 'yyyy-MM-dd');
+                let todayRevenue = 0;
+
+                if (lastRow > 1) {
+                    const allData = collectionsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
+                    for (const row of allData) {
+                        if (Utilities.formatDate(new Date(row[0]), 'Asia/Manila', 'yyyy-MM-dd') === todayStr) {
+                            todayRevenue += parseFloat(row[5]) || 0;
+                        }
+                    }
+                }
+
+                let currentBalance = 0;
+                if (balanceSheet && balanceSheet.getLastRow() > 1) {
+                    const balanceData = balanceSheet.getRange(2, 1, balanceSheet.getLastRow() - 1, 5).getValues();
+                    currentBalance = parseFloat(balanceData[balanceData.length - 1][4]) || 0;
+                }
+
+                const monthlyData = {};
+                const monthlyLabels = [];
+
+                if (lastRow > 1) {
+                    const allData = collectionsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
+                    for (const row of allData) {
+                        const date = new Date(row[0]);
+                        const monthKey = Utilities.formatDate(date, 'Asia/Manila', 'yyyy-MM');
+
+                        if (!monthlyData[monthKey]) {
+                            monthlyData[monthKey] = 0;
+                            monthlyLabels.push(monthKey);
+                        }
+                        monthlyData[monthKey] += parseFloat(row[5]) || 0;
+                    }
+                }
+
+                const natureData = {};
+                const natureLabels = [];
+
+                if (lastRow > 1) {
+                    const allData = collectionsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
+                    for (const row of allData) {
+                        const nature = row[4];
+
+                        if (!natureData[nature]) {
+                            natureData[nature] = 0;
+                            natureLabels.push(nature);
+                        }
+                        natureData[nature] += parseFloat(row[5]) || 0;
+                    }
+                }
+
+                return ContentService.createTextOutput(JSON.stringify({
+                    status: 'success',
+                    totalRecords: totalRecords,
+                    todayRevenue: todayRevenue,
+                    currentBalance: currentBalance,
+                    monthlyLabels: monthlyLabels.sort(),
+                    monthlyData: monthlyLabels.sort().map(m => monthlyData[m]),
+                    natureLabels: natureLabels,
+                    natureData: natureLabels.map(nature => natureData[nature])
+                })).setMimeType(ContentService.MimeType.JSON);
+
+            } catch (error) {
+                return ContentService.createTextOutput(JSON.stringify({
+                    status: 'error',
+                    message: error.toString()
+                })).setMimeType(ContentService.MimeType.JSON);
+            }
+    }
+}
+
+function doPost(e) {
+    const lock = LockService.getScriptLock();
+    lock.tryLock(10000);
+
+    try {
+        const params = e.parameter;
+        Logger.log('Received: ' + JSON.stringify(params));
+
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+
+        if (params.action === 'addCollection') {
+            // Check for OR duplicate
+            const orNumber = parseInt(params['OR_Number']);
+            if (checkORDuplicate(orNumber)) {
+                return ContentService.createTextOutput(JSON.stringify({
+                    'result': 'error',
+                    'error': 'DUPLICATE_OR',
+                    'message': 'OR Number ' + orNumber + ' already exists in the system.',
+                    'orNumber': orNumber
+                })).setMimeType(ContentService.MimeType.JSON);
+            }
+
+            // Add to Collections sheet
+            const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+            const nextRow = collectionsSheet.getLastRow() + 1;
+
+            const rowData = [
+                params['Date'] ? new Date(params['Date']) : new Date(),
+                params['RCD_No'] || '',
+                orNumber,
+                params['Payor_Name'] || params['Payor'] || '',
+                params['Nature_of_Collection'] || '',
+                parseFloat(params['Amount']) || 0,
+                new Date()
+            ];
+
+            collectionsSheet.getRange(nextRow, 1, 1, 7).setValues([rowData]);
+
+            // Format
+            collectionsSheet.getRange(nextRow, 1).setNumberFormat('yyyy-mm-dd');
+            collectionsSheet.getRange(nextRow, 6).setNumberFormat('₱#,##0.00');
+            collectionsSheet.getRange(nextRow, 7).setNumberFormat('yyyy-mm-dd hh:mm:ss');
+
+            // Update Balance Sheet
+            const balanceResult = updateBalanceSheet();
+
+            // Get updated daily total
+            const dateStr = params['Date'] || Utilities.formatDate(new Date(), 'Asia/Manila', 'yyyy-MM-dd');
+            const dailyTotal = getDailyRevenue(dateStr);
+
+            Logger.log('Added row ' + nextRow + ', updated balance: ' + JSON.stringify(balanceResult));
+
+            return ContentService.createTextOutput(JSON.stringify({
+                'result': 'success',
+                'row': nextRow,
+                'message': 'Collection recorded successfully',
+                'orNumber': orNumber,
+                'dailyTotal': dailyTotal,
+                'balanceUpdated': balanceResult.success,
+                'data': {
+                    'date': params['Date'],
+                    'rcdNo': params['RCD_No'],
+                    'orNumber': orNumber,
+                    'payor': params['Payor_Name'] || params['Payor'],
+                    'nature': params['Nature_of_Collection'],
+                    'amount': params['Amount']
+                }
+            })).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        return ContentService.createTextOutput(JSON.stringify({
+            result: 'error',
+            message: 'Invalid action'
+        })).setMimeType(ContentService.MimeType.JSON);
+
+    } catch (error) {
+        Logger.log('Error in doPost: ' + error.toString());
+        return ContentService.createTextOutput(JSON.stringify({
+            'result': 'error',
+            'error': error.toString(),
+            'message': 'Failed to record collection'
+        })).setMimeType(ContentService.MimeType.JSON);
+
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+// ============================================
+// TEST FUNCTIONS
+// ============================================
+
+function testConnection() {
+    try {
+        const ss = SpreadsheetApp.openById(SHEET_ID);
+        const collectionsSheet = ss.getSheetByName(COLLECTIONS_SHEET);
+        const balanceSheet = ss.getSheetByName(BALANCE_SHEET);
+
+        Logger.log('✅ Connected!');
+        Logger.log('Collections rows: ' + (collectionsSheet ? collectionsSheet.getLastRow() : 0));
+        Logger.log('Balance rows: ' + (balanceSheet ? balanceSheet.getLastRow() : 0));
+
+        return { success: true };
+
+    } catch (error) {
+        Logger.log('❌ Error: ' + error.toString());
+        return { success: false, error: error.toString() };
+    }
+}
